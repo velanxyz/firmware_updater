@@ -2,6 +2,7 @@
 
 use hidapi::HidApi;
 use serde::Deserialize;
+use serde_json::Value;
 use slint::{SharedString, VecModel, Weak};
 use std::process::Command;
 use std::rc::Rc;
@@ -11,6 +12,14 @@ use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
 
 slint::include_modules!();
+
+// Функция для сокращения длинных названий ПО
+fn shorten_software_name(name: &str) -> &str {
+    match name {
+        "Onboard Memory Manager" => "OMM",
+        _ => name,
+    }
+}
 
 #[derive(Deserialize, Clone, Debug)]
 struct SoftwareOption {
@@ -76,11 +85,21 @@ async fn main() -> Result<(), slint::PlatformError> {
                     ui.set_device_list(Rc::new(VecModel::from(names)).into());
 
                     if found.is_empty() {
-                        ui.set_status_text("Logitech устройства не найдены".into());
+                        ui.set_status_text("Устройства не найдены".into());
                         ui.set_current_device_index(-1);
+                        ui.set_software_options(Rc::new(VecModel::default()).into());
                     } else {
                         ui.set_status_text(format!("Найдено: {}", found.len()).into());
                         ui.set_current_device_index(0);
+                        // Обновляем опции для первого устройства
+                        if !found.is_empty() {
+                            let device = &found[0];
+                            let option_names: Vec<SharedString> = 
+                                device.options.iter()
+                                    .map(|opt| format!("Скачать {}", shorten_software_name(&opt.name)).into())
+                                    .collect();
+                            ui.set_software_options(Rc::new(VecModel::from(option_names)).into());
+                        }
                     }
                 }
             });
@@ -88,11 +107,25 @@ async fn main() -> Result<(), slint::PlatformError> {
     });
 
     // --- ВЫБОР УСТРОЙСТВА ---
+    let state_select = state.clone();
     let ui_select = ui_handle.clone();
     ui.on_device_selected(move |index| {
         if let Some(ui) = ui_select.upgrade() {
             if index >= 0 {
-                ui.set_status_text("Готов к загрузке".into());
+                let state = state_select.lock().unwrap();
+                if (index as usize) < state.found_devices.len() {
+                    let device = &state.found_devices[index as usize];
+                    // Обновляем список опций ПО в UI
+                    let option_names: Vec<SharedString> = 
+                        device.options.iter()
+                            .map(|opt| format!("Скачать {}", shorten_software_name(&opt.name)).into())
+                            .collect();
+                    ui.set_software_options(Rc::new(VecModel::from(option_names)).into());
+                    ui.set_status_text("Готов к загрузке".into());
+                }
+            } else {
+                // Очищаем список опций, если устройство не выбрано
+                ui.set_software_options(Rc::new(VecModel::default()).into());
             }
         }
     });
@@ -176,8 +209,30 @@ async fn fetch_database(
     match client.get(&url).headers(headers).send().await {
         Ok(resp) => {
             if resp.status().is_success() {
-                if let Ok(json) = resp.json::<Vec<SupportedDevice>>().await {
-                    return json;
+                if let Ok(raw_devices) = resp.json::<Vec<Value>>().await {
+                    let mut devices = Vec::new();
+                    for raw in raw_devices {
+                        // Пробуем сначала "options", потом "jsonb" для обратной совместимости
+                        let options_json = raw.get("options")
+                            .or_else(|| raw.get("jsonb"));
+                        
+                        if let (Some(name), Some(vid), Some(pid), Some(options_json)) = (
+                            raw.get("name").and_then(|v| v.as_str()),
+                            raw.get("vid").and_then(|v| v.as_u64()),
+                            raw.get("pid").and_then(|v| v.as_u64()),
+                            options_json,
+                        ) {
+                            if let Ok(options) = serde_json::from_value::<Vec<SoftwareOption>>(options_json.clone()) {
+                                devices.push(SupportedDevice {
+                                    name: name.to_string(),
+                                    vid: vid as u16,
+                                    pid: pid as u16,
+                                    options,
+                                });
+                            }
+                        }
+                    }
+                    return devices;
                 }
             }
             Vec::new()
@@ -197,7 +252,7 @@ fn scan_usb(database: &[SupportedDevice]) -> Vec<SupportedDevice> {
             let pid = device.product_id();
             let mut exact_match = false;
 
-            // 1. Точное совпадение в базе
+            // 1. Точное совпадение VID/PID в базе
             for supported in database {
                 if vid == supported.vid && pid == supported.pid {
                     if !found.iter().any(|d: &SupportedDevice| d.name == supported.name) {

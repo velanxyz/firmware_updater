@@ -13,6 +13,7 @@ export component AppWindow inherits Window {
     in property <float> progress: 0.0;
     in property <string> status_text: "Нажмите 'Поиск' для старта";
     in property <bool> is_downloading: false;
+    in property <[string]> software_options: [];
 
     // Сигналы
     callback scan_clicked();
@@ -86,18 +87,14 @@ export component AppWindow inherits Window {
             }
         }
 
+        // Динамически рендерим кнопки на основе количества опций
         if root.current_device_index >= 0 && !root.is_downloading : HorizontalBox {
             spacing: 10px;
-            Button {
-                text: "Скачать G HUB";
-                primary: true;
+            for option[index] in root.software_options : Button {
+                text: option;
+                primary: index == 0;
                 height: 40px;
-                clicked => { root.download_clicked(0); }
-            }
-            Button {
-                text: "Скачать OMM";
-                height: 40px;
-                clicked => { root.download_clicked(1); }
+                clicked => { root.download_clicked(index); }
             }
         }
     }
