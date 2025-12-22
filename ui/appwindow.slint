@@ -2,10 +2,10 @@ import { Button, VerticalBox, HorizontalBox, ComboBox, ProgressIndicator, LineEd
 
 export component AppWindow inherits Window {
     title: "Firmware Assistant";
-    width: 450px;
-    height: 350px;
-    background: #1e1e1e;
-    default-font-size: 14px;
+    width: 400px;
+    height: 380px;
+    default-font-size: 12px;
+    background: #2A2A2A;
 
     // Входящие данные
     in property <[string]> device_list;
@@ -14,88 +14,201 @@ export component AppWindow inherits Window {
     in property <string> status_text: "Нажмите 'Поиск' для старта";
     in property <bool> is_downloading: false;
     in property <[string]> software_options: [];
+    in property <bool> show_description_dialog: false;
+    in property <string> description_text: "";
+    in property <string> description_title: "";
 
     // Сигналы
     callback scan_clicked();
     callback download_clicked(int);
     callback device_selected(int); // Мы сами вычислим индекс в Rust, или передадим индекс
+    callback show_description(int);
+    callback close_description();
 
     VerticalBox {
-        padding: 25px;
-        spacing: 20px;
+        padding: 20px;
+        spacing: 10px;
 
         // Заголовок
         Text {
             text: "DEVICE UPDATER";
-            font-size: 20px;
+            font-size: 18px;
             font-weight: 900;
-            color: #888888;
+            color: #ffffff;
             horizontal-alignment: center;
+            letter-spacing: 1px;
+        }
+        
+        // Разделитель
+        Rectangle {
+            height: 1px;
+            background: #3a3a3a;
+            width: 100%;
         }
 
-        VerticalBox {
-            spacing: 5px;
-            Text { text: "Выбор устройства:"; color: #cccccc; font-size: 12px; }
-            
-            HorizontalBox {
-                spacing: 10px;
-                // ComboBox в Slint 1.8 чуть сложнее, давай упростим
-                // Используем просто кнопки "Вперед/Назад" если ComboBox глючит,
-                // Но попробуем починить ComboBox.
-                ComboBox {
-                    model: root.device_list;
-                    current-index: root.current_device_index;
-                    // Исправление ошибки: selected возвращает текст, но current-index меняется сам
-                    selected(text) => { 
-                        // Мы не можем легко получить индекс из текста в Slint.
-                        // Поэтому просто игнорируем колбэк здесь, 
-                        // Rust прочитает current-device-index сам.
-                        // Или можно сделать хак: 
-                        root.device_selected(self.current-index);
-                    }
-                    height: 35px;
-                    enabled: !root.is_downloading;
-                }
-                
+        // Динамически рендерим кнопки на основе количества опций
+        if root.current_device_index >= 0 && !root.is_downloading : VerticalBox {
+            spacing: 6px;
+            for option[index] in root.software_options : HorizontalBox {
+                spacing: 4px;
                 Button {
-                    text: "🔄";
-                    width: 40px;
-                    clicked => { root.scan_clicked(); }
-                    enabled: !root.is_downloading;
+                    text: option;
+                    primary: index == 0;
+                    height: 32px;
+                    min-width: 150px;
+                    clicked => { root.download_clicked(index); }
+                }
+                TouchArea {
+                    width: 32px;
+                    height: 32px;
+                    clicked => { root.show_description(index); }
+                    
+                    Rectangle {
+                        width: 100%;
+                        height: 100%;
+                        background: #3a3a3a;
+                        border-radius: 6px;
+                        border-width: 1px;
+                        border-color: #4a4a4a;
+                        
+                        Image {
+                            source: @image-url("info-icon.svg");
+                            width: 16px;
+                            height: 16px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
                 }
             }
-        }
-
-        Rectangle {
-            background: #252525;
-            border-radius: 5px;
-            height: 40px;
-            Text {
-                text: root.status_text;
-                color: #aaaaaa;
-                vertical-alignment: center;
-                horizontal-alignment: center;
+            
+            // Всплывающее окно с описанием
+            if root.show_description_dialog : Rectangle {
+                background: #252525;
+                border-radius: 6px;
+                border-width: 1px;
+                border-color: #4a4a4a;
+                width: 100%;
+                
+                VerticalBox {
+                    padding: 10px;
+                    spacing: 6px;
+                    
+                    HorizontalBox {
+                        Text {
+                            text: root.description_title;
+                            font-size: 11px;
+                            font-weight: 600;
+                            color: #ffffff;
+                        }
+                        Rectangle { width: 1px; }
+                        TouchArea {
+                            width: 20px;
+                            height: 20px;
+                            clicked => { root.close_description(); }
+                            Rectangle {
+                                width: 100%;
+                                height: 100%;
+                                background: transparent;
+                                Text {
+                                    text: "×";
+                                    font-size: 16px;
+                                    color: #888888;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+                    
+                    Text {
+                        text: root.description_text;
+                        font-size: 10px;
+                        color: #cccccc;
+                        wrap: word-wrap;
+                    }
+                }
             }
         }
 
         if root.is_downloading : VerticalBox {
-            spacing: 5px;
-            Text { text: "Загрузка..."; color: #4caf50; font-size: 12px; }
+            spacing: 6px;
+            Text { 
+                text: "Загрузка..."; 
+                color: #2196f3; 
+                font-size: 12px; 
+                font-weight: 500;
+            }
             ProgressIndicator {
                 progress: root.progress;
                 height: 8px;
             }
         }
 
-        // Динамически рендерим кнопки на основе количества опций
-        if root.current_device_index >= 0 && !root.is_downloading : HorizontalBox {
-            spacing: 10px;
-            for option[index] in root.software_options : Button {
-                text: option;
-                primary: index == 0;
-                height: 40px;
-                clicked => { root.download_clicked(index); }
+        // Карточка выбора устройства
+        Rectangle {
+            background: #252525;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: #3a3a3a;
+            
+            VerticalBox {
+                padding: 10px;
+                spacing: -2px;
+                Text { 
+                    text: "Выбор устройства:"; 
+                    color: #cccccc; 
+                    font-size: 11px;
+                    height: 14px;
+                }
+                
+                HorizontalBox {
+                    spacing: 8px;
+                    ComboBox {
+                        model: root.device_list;
+                        current-index: root.current_device_index;
+                        selected(text) => { 
+                            root.device_selected(self.current-index);
+                        }
+                        height: 30px;
+                        enabled: !root.is_downloading;
+                    }
+                    
+                    TouchArea {
+                        width: 35px;
+                        height: 30px;
+                        enabled: !root.is_downloading;
+                        clicked => { root.scan_clicked(); }
+                        
+                        Rectangle {
+                            width: 100%;
+                            height: 100%;
+                            background: parent.pressed ? #3a3a3a : #2a2a2a;
+                            border-radius: 6px;
+                            border-width: parent.pressed ? 2px : 1px;
+                            border-color: parent.pressed ? #4a4a4a : #3a3a3a;
+                            opacity: parent.pressed ? 0.8 : 1.0;
+                            
+                            Image {
+                                source: @image-url("refresh-icon.svg");
+                                width: 16px;
+                                height: 16px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
             }
+        }
+
+        Text {
+            text: root.status_text;
+            color: #4caf50;
+            font-size: 11px;
+            font-weight: 500;
+            horizontal-alignment: center;
+            height: 12px;
         }
     }
 }
